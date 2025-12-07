@@ -130,15 +130,30 @@ def extract_title_and_description(html: str, *, job_id: int | None = None) -> di
 
     return {"title": title, "description": desc}
 
-def fetch_and_extract_job_meta(job_id: int, *, session: requests.Session | None = None) -> dict:
+def fetch_and_extract_job_meta(
+    job_id: int,
+    *,
+    session: requests.Session | None = None,
+) -> dict[str, Any]:
     html = fetch_job_html(job_id, session=session)
-    meta = extract_title_and_description(html, job_id=job_id)
+
+    # ✅ extract_title_and_description가 job_id 인자를 안 받으면 여기서 제거
+    meta = extract_title_and_description(html)  # 또는 함수 정의를 job_id 받게 수정
+
     ld = extract_jobposting_jsonld_fields(html)
-    # ld = extract_jobposting_jsonld_fields(html, debug=debug_jsonld)
+
+    # ✅ jsonld 파서 실패/타입 불일치 방어
+    if not isinstance(ld, dict):
+        ld = {}
+
+    # id/url 기본 필드
     meta["id"] = job_id
     meta["url"] = DETAIL_URL.format(id=job_id)
 
+    # ✅ 충돌 가능하면 우선순위 결정: jsonld가 덮어써도 되는지 판단
+    # 예: title/description은 meta가 더 신뢰되면 ld를 뒤에서 merge하지 않기
     meta.update(ld)
+
     return meta
 
 def extract_name_id_position(payload: dict):
@@ -151,19 +166,14 @@ def extract_name_id_position(payload: dict):
         })
     return out
 
-def build_llm_payload(job_row: dict, meta: dict) -> str:
+def build_llm_payload(enriched: dict) -> str:
     parts = [
-        f"id: {job_row.get('id')}",
-        f"company_name: {job_row.get('name')}",
-        f"position: {job_row.get('position')}",
-        f"title_tag: {meta.get('title')}",
-        f"meta_description: {meta.get('description')}",
-        f"employmentType: {meta.get('employmentType')}",
-        f"datePosted: {meta.get('datePosted')}",
-        f"occupationalCategory: {meta.get('occupationalCategory')}",
-        f"validThrough: {meta.get('validThrough')}",
-        f"experienceRequirements: {meta.get('experienceRequirements')}",
-        f"url: {meta.get('url')}",
+        f"id: {enriched.get('id')}",
+        f"company_name: {enriched.get('name')}",
+        f"position: {enriched.get('position')}",
+        f"title_tag: {enriched.get('title') or enriched.get('title_tag')}",
+        f"meta_description: {enriched.get('description') or enriched.get('meta_description')}",
+        f"url: {enriched.get('url')}",
     ]
     return "\n".join(parts)
 
