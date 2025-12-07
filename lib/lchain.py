@@ -6,7 +6,7 @@ llm = ChatOpenAI(
     model="Qwen/Qwen2.5-7B-Instruct",
     temperature=0.3,
     top_p=0.8,
-    max_tokens=512,
+    max_tokens=1024,
     # OpenAI 표준 밖 파라미터는 vLLM/OpenAI-client 관례대로 extra_body로 전달
     extra_body={"repetition_penalty": 1.05},
     model_kwargs={"response_format": {"type": "json_object"}},  # ✅ JSON 강제
