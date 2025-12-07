@@ -1,10 +1,11 @@
 import time
 import requests
+from bs4 import BeautifulSoup
 
 API = "https://www.wanted.co.kr/api/chaos/navigation/v1/results"
 
 def fetch_wanted(job_group_id=518, limit=20):
-    ts_key = str(int(time.time() * 1000))
+    # ts_key = str(int(time.time() * 1000))
     params = {
         # ts_key: "",
         "job_group_id": str(job_group_id),
@@ -36,6 +37,27 @@ def extract_name_id_position(payload: dict):
             "position": item.get("position"),             # 포지션명
         })
     return out
+
+def extract_title_and_description(html: str) -> dict:
+    """HTML에서 <title>과 meta description(content)만 추출."""
+    soup = BeautifulSoup(html, "html.parser")
+
+    title = None
+    if soup.title and soup.title.string:
+        title = soup.title.string.strip()
+
+    desc = None
+    tag = soup.find("meta", attrs={"name": "description"})
+    if tag and tag.get("content"):
+        desc = tag["content"].strip()
+
+    # fallback: og:description
+    if not desc:
+        og = soup.find("meta", attrs={"property": "og:description"})
+        if og and og.get("content"):
+            desc = og["content"].strip()
+
+    return {"title": title, "description": desc}
 
 if __name__ == "__main__":
     payload = fetch_wanted(limit=20)
