@@ -4,9 +4,14 @@ import re
 import requests
 from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import json
+import re
+from typing import Any, Dict, Optional, Tuple
+import html as htmlmod
 
 API = "https://www.wanted.co.kr/api/chaos/navigation/v1/results"
 DETAIL_URL = "https://www.wanted.co.kr/wd/{id}"
+_TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")  # , } / , ] 제거
 
 DETAIL_HEADERS = {
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -128,8 +133,12 @@ def extract_title_and_description(html: str, *, job_id: int | None = None) -> di
 def fetch_and_extract_job_meta(job_id: int, *, session: requests.Session | None = None) -> dict:
     html = fetch_job_html(job_id, session=session)
     meta = extract_title_and_description(html, job_id=job_id)
+    ld = extract_jobposting_jsonld_fields(html)
+    # ld = extract_jobposting_jsonld_fields(html, debug=debug_jsonld)
     meta["id"] = job_id
     meta["url"] = DETAIL_URL.format(id=job_id)
+
+    meta.update(ld)
     return meta
 
 def extract_name_id_position(payload: dict):
@@ -149,6 +158,11 @@ def build_llm_payload(job_row: dict, meta: dict) -> str:
         f"position: {job_row.get('position')}",
         f"title_tag: {meta.get('title')}",
         f"meta_description: {meta.get('description')}",
+        f"employmentType: {meta.get('employmentType')}",
+        f"datePosted: {meta.get('datePosted')}",
+        f"occupationalCategory: {meta.get('occupationalCategory')}",
+        f"validThrough: {meta.get('validThrough')}",
+        f"experienceRequirements: {meta.get('experienceRequirements')}",
         f"url: {meta.get('url')}",
     ]
     return "\n".join(parts)
@@ -162,19 +176,85 @@ def enrich_jobs_with_detail_meta(jobs: list[dict], *, max_workers: int = 6) -> l
                 j = futs[fut]
                 try:
                     meta = fut.result()
-                    out.append({**j, "title_tag": meta["title"], "meta_description": meta["description"], "url": meta["url"]})
+                    out.append({
+                        **j,
+                        "title_tag": meta.get("title"),
+                        "meta_description": meta.get("description"),
+                        "url": meta.get("url"),
+                        "employmentType": meta.get("employmentType"),
+                        "datePosted": meta.get("datePosted"),
+                        "occupationalCategory": meta.get("occupationalCategory"),
+                        "validThrough": meta.get("validThrough"),
+                        "experienceRequirements": meta.get("experienceRequirements"),
+                    })
                 except Exception as e:
                     out.append({**j, "title_tag": None, "meta_description": None, "url": DETAIL_URL.format(id=j["id"]), "error": str(e)})
     return out
 
+
+def extract_jobposting_jsonld_fields(html: str) -> Dict[str, Any]:
+    soup = BeautifulSoup(html, "html.parser")
+    scripts = soup.find_all("script", attrs={"type": "application/ld+json"})
+
+    candidates = []
+    for sc in scripts:
+        raw = (sc.string or sc.get_text() or "").strip()
+        if not raw:
+            continue
+        raw = _TRAILING_COMMA_RE.sub(r"\1", raw)
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            continue
+
+        if isinstance(obj, list):
+            candidates.extend([x for x in obj if isinstance(x, dict)])
+        elif isinstance(obj, dict):
+            candidates.append(obj)
+
+    def score(o: Dict[str, Any]) -> int:
+        s = 0
+        t = o.get("@type")
+        if t == "JobPosting" or (isinstance(t, list) and "JobPosting" in t):
+            s += 10
+        for k in ("employmentType", "datePosted", "occupationalCategory", "validThrough", "experienceRequirements"):
+            if k in o:
+                s += 2
+        return s
+
+    best = max(candidates, key=score, default=None)
+    if not best:
+        return {}
+
+    valid_through = best.get("validThrough")
+    if valid_through in (None, "", [], {}):
+        valid_through = "상시채용"
+
+    return {
+        "employmentType": best.get("employmentType"),
+        "datePosted": best.get("datePosted"),
+        "occupationalCategory": best.get("occupationalCategory"),
+        "validThrough": best.get("validThrough"),
+        "experienceRequirements": best.get("experienceRequirements"),
+    }
+
 if __name__ == "__main__":
-    payload = fetch_wanted(limit=3)  # 디버그할 땐 3개만
+    payload = fetch_wanted(limit=3)
     rows = extract_name_id_position(payload)
 
     enriched = enrich_jobs_with_detail_meta(rows, max_workers=3)
 
-    # 1개만 LLM payload로 출력
-    meta = {"title": enriched[0]["title_tag"], "description": enriched[0]["meta_description"], "url": enriched[0]["url"]}
-    llm_payload = build_llm_payload(enriched[0], meta)
+    first = enriched[0]
+    meta = {
+        "title": first.get("title_tag"),
+        "description": first.get("meta_description"),
+        "url": first.get("url"),
+        "employmentType": first.get("employmentType"),
+        "datePosted": first.get("datePosted"),
+        "occupationalCategory": first.get("occupationalCategory"),
+        "validThrough": first.get("validThrough"),
+        "experienceRequirements": first.get("experienceRequirements"),
+    }
+    llm_payload = build_llm_payload(first, meta)
     print("\n=== LLM PAYLOAD ===")
     print(llm_payload)
