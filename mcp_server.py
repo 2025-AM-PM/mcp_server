@@ -1,7 +1,7 @@
 import sys
 import logging
 from mcp.server.fastmcp import FastMCP
-from typing import Any
+from typing import Any, Optional
 import httpx
 from lib.req import *
 
@@ -29,10 +29,10 @@ def wanted_detail_payload(
         enriched["position"] = position
         
         text = build_llm_payload(enriched)
-        structed_data = {"ok": True, "id": job_id, "text": text, "data": enriched}
+        
         return text
     except Exception as e:
-        structed_data = {"ok": False, "id": job_id, "error": str(e), "text": f"id: {job_id}\nerror: {e}"}
+        
         return f"Error: {e}"
 
 if __name__ == "__main__":

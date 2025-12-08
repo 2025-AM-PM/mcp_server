@@ -38,6 +38,7 @@ def fetch_wanted(job_group_id=518, limit=20):
         "years": "-1",
         "locations": "all",
         "limit": str(limit),
+        "job_sort": "job.latest_order"
     }
     headers = {
         "accept": "application/json, text/plain, */*",
@@ -174,6 +175,11 @@ def build_llm_payload(enriched: dict) -> str:
         f"title_tag: {enriched.get('title') or enriched.get('title_tag')}",
         f"meta_description: {enriched.get('description') or enriched.get('meta_description')}",
         f"url: {enriched.get('url')}",
+        f"employmentType: {enriched.get('employmentType')}",
+        f"datePosted: {enriched.get('datePosted')}",
+        f"occupationalCategory: {enriched.get('occupationalCategory')}",
+        f"validThrough: {enriched.get('validThrough')}",
+        f"experienceRequirements: {enriched.get('experienceRequirements')}",
     ]
     return "\n".join(parts)
 
@@ -265,6 +271,6 @@ if __name__ == "__main__":
         "validThrough": first.get("validThrough"),
         "experienceRequirements": first.get("experienceRequirements"),
     }
-    llm_payload = build_llm_payload(first, meta)
+    llm_payload = build_llm_payload(first)
     print("\n=== LLM PAYLOAD ===")
     print(llm_payload)

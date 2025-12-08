@@ -10,7 +10,7 @@ from lib.req import *
 from lib.util import *
 
 async def main():
-    out_dir = Path("./out/jobs_json") / datetime.now().strftime("%Y%m%d")
+    # out_dir = Path("./out/jobs_json") / datetime.now().strftime("%Y%m%d")
     ndjson_path = Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.ndjson"
 
     client = MultiServerMCPClient(
@@ -123,16 +123,11 @@ async def main():
 
         # (선택) JSON 파싱 확인
         obj = json.loads(out.content)
-        results.append(obj)
-
-        # 4) 파일 저장
-        save_job_json(out_dir, row["id"], obj)     # 개별 JSON
         append_ndjson(ndjson_path, obj)            # 누적 NDJSON
 
-        results.append(obj)
 
     # 전체 결과도 한 파일로 저장하고 싶으면:
-    atomic_write_text(Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.json",
-                      json.dumps(results, ensure_ascii=False, indent=2))
+    # atomic_write_text(Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.json",
+    #                   json.dumps(results, ensure_ascii=False, indent=2))
 
 asyncio.run(main())
