@@ -22,8 +22,6 @@ def wanted_detail_payload(
     LLM에 넘길 string(text)로 반환
     """
     try:
-        row = {"id": job_id, "name": company_name, "position": position}
-        row = {"id": job_id, "name": company_name, "position": position}
         enriched = fetch_and_extract_job_meta(job_id)
         enriched["name"] = company_name
         enriched["position"] = position

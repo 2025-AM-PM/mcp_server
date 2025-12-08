@@ -8,10 +8,13 @@ import json
 import re
 from typing import Any, Dict, Optional, Tuple
 import html as htmlmod
+from urllib.parse import urljoin
 
 API = "https://www.wanted.co.kr/api/chaos/navigation/v1/results"
 DETAIL_URL = "https://www.wanted.co.kr/wd/{id}"
 _TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")  # , } / , ] 제거
+LIST_URL = "https://www.jobkorea.co.kr/Top100/?Main_Career_Type=1&Search_Type=1&BizJobtype_Bctgr_Code=10031&BizJobtype_Bctgr_Name=AI%C2%B7%EA%B0%9C%EB%B0%9C%C2%B7%EB%8D%B0%EC%9D%B4%ED%84%B0&BizJobtype_Code=0&BizJobtype_Name=AI%C2%B7%EA%B0%9C%EB%B0%9C%C2%B7%EB%8D%B0%EC%9D%B4%ED%84%B0+%EC%A0%84%EC%B2%B4&Major_Big_Code=0&Major_Big_Name=%EC%A0%84%EC%B2%B4&Major_Code=0&Major_Name=%EC%A0%84%EC%B2%B4&Edu_Level_Code=9&Edu_Level_Name=%EC%A0%84%EC%B2%B4&Edu_Level_Name=%EC%A0%84%EC%B2%B4&MidScroll=&duty-depth1=on"
+
 
 DETAIL_HEADERS = {
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -29,6 +32,20 @@ DEBUG = True  # 필요 시 False
 def _dbg(msg: str):
     if DEBUG:
         print(f"[DEBUG] {msg}")
+
+def fetch_jobkorea_links():
+    resp = requests.get(LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
+
+    links = []
+    for a in soup.select("ol.rankList li a.link"):
+        href = a.get("href")
+        if not href:
+            continue
+        full_url = urljoin("https://www.jobkorea.co.kr", href)
+        links.append(full_url)
+    return links
 
 def fetch_wanted(job_group_id=518, limit=20):
     params = {
@@ -94,40 +111,6 @@ def extract_title_and_description(html: str, *, job_id: int | None = None) -> di
 
     if not desc and og_desc:
         desc = og_desc
-
-    # ===== 디버깅 출력 =====
-    # if DEBUG:
-    #     jid = f"{job_id}" if job_id is not None else "?"
-    #     _dbg(f"[{jid}] title parsed: {repr(title)[:200]}")
-    #     _dbg(f"[{jid}] meta[name=description] found: {desc_tag is not None}")
-    #     if desc_tag is not None:
-    #         # meta 태그 자체를 보여주면 가장 빠르게 원인 파악 가능
-    #         _dbg(f"[{jid}] meta[name=description] tag: {str(desc_tag)[:400]}")
-    #     _dbg(f"[{jid}] meta[property=og:description] found: {og_tag is not None}")
-    #     if og_tag is not None:
-    #         _dbg(f"[{jid}] meta[property=og:description] tag: {str(og_tag)[:400]}")
-    #     _dbg(f"[{jid}] final description len: {0 if desc is None else len(desc)}")
-
-    #     # 4) head에 있는 meta들 일부 샘플 출력(원인 파악용)
-    #     head = soup.head
-    #     if head:
-    #         metas = head.find_all("meta")
-    #         _dbg(f"[{jid}] head meta count: {len(metas)}")
-    #         # name/ property 있는 meta만 20개까지 출력
-    #         shown = 0
-    #         for m in metas:
-    #             if m.get("name") or m.get("property"):
-    #                 _dbg(f"[{jid}] head meta: {str(m)[:250]}")
-    #                 shown += 1
-    #                 if shown >= 20:
-    #                     break
-
-    #     # 5) 혹시 HTML이 SPA 뼈대인지 빠르게 확인 (script가 비정상적으로 많은 경우)
-    #     scripts = soup.find_all("script")
-    #     _dbg(f"[{jid}] script count: {len(scripts)}")
-    #     if title is None and desc is None:
-    #         _dbg(f"[{jid}] title/desc 둘 다 None -> JS 렌더링/차단 가능성. HTML 앞부분 dump:")
-    #         _dbg(html[:800].replace("\n", "\\n"))
 
     return {"title": title, "description": desc}
 
@@ -255,22 +238,24 @@ def extract_jobposting_jsonld_fields(html: str) -> Dict[str, Any]:
     }
 
 if __name__ == "__main__":
-    payload = fetch_wanted(limit=3)
-    rows = extract_name_id_position(payload)
+    # payload = fetch_wanted(limit=3)
+    # rows = extract_name_id_position(payload)
 
-    enriched = enrich_jobs_with_detail_meta(rows, max_workers=3)
+    # enriched = enrich_jobs_with_detail_meta(rows, max_workers=3)
 
-    first = enriched[0]
-    meta = {
-        "title": first.get("title_tag"),
-        "description": first.get("meta_description"),
-        "url": first.get("url"),
-        "employmentType": first.get("employmentType"),
-        "datePosted": first.get("datePosted"),
-        "occupationalCategory": first.get("occupationalCategory"),
-        "validThrough": first.get("validThrough"),
-        "experienceRequirements": first.get("experienceRequirements"),
-    }
-    llm_payload = build_llm_payload(first)
-    print("\n=== LLM PAYLOAD ===")
-    print(llm_payload)
+    # first = enriched[0]
+    # meta = {
+    #     "title": first.get("title_tag"),
+    #     "description": first.get("meta_description"),
+    #     "url": first.get("url"),
+    #     "employmentType": first.get("employmentType"),
+    #     "datePosted": first.get("datePosted"),
+    #     "occupationalCategory": first.get("occupationalCategory"),
+    #     "validThrough": first.get("validThrough"),
+    #     "experienceRequirements": first.get("experienceRequirements"),
+    # }
+    # llm_payload = build_llm_payload(first)
+    # print("\n=== LLM PAYLOAD ===")
+    # print(llm_payload)
+    link = fetch_jobkorea_links()
+    print(link)
