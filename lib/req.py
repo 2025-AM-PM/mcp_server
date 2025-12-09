@@ -1,4 +1,4 @@
-# ✅ 디버깅 옵션/로그 추가 버전
+
 import time
 import re
 import requests
@@ -6,15 +6,30 @@ from bs4 import BeautifulSoup
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import json
 import re
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, List
 import html as htmlmod
 from urllib.parse import urljoin
+
+"""
+최종 스키마:
+  "회사이름": string|null,
+  "포지션": string|null,
+  "회사 위치": string|null,
+  "자격 요건": string[],            // 없으면 []
+  "주요업무": string[],             // 없으면 []
+  "employmentType": string[]|null,     // 정규직/계약직/인턴 등 명시된 경우만, 없으면 null
+  "datePosted": string|null,         // ISO-8601(YYYY-MM-DD)로 명시된 경우만, 없으면 null
+  "occupationalCategory": string[],  // 입력에서 확실한 경우만, 없으면 []
+  "validThrough": string|null,       // 마감일/지원마감이 명시된 경우만 ISO-8601, 없으면 null
+  "experienceRequirements": string[],// “n년 이상/신입/경력” 등 경험 요구사항만 추려서, 없으면 []
+  "url": string|null
+"""
 
 API = "https://www.wanted.co.kr/api/chaos/navigation/v1/results"
 DETAIL_URL = "https://www.wanted.co.kr/wd/{id}"
 _TRAILING_COMMA_RE = re.compile(r",\s*([}\]])")  # , } / , ] 제거
 LIST_URL = "https://www.jobkorea.co.kr/Top100/?Main_Career_Type=1&Search_Type=1&BizJobtype_Bctgr_Code=10031&BizJobtype_Bctgr_Name=AI%C2%B7%EA%B0%9C%EB%B0%9C%C2%B7%EB%8D%B0%EC%9D%B4%ED%84%B0&BizJobtype_Code=0&BizJobtype_Name=AI%C2%B7%EA%B0%9C%EB%B0%9C%C2%B7%EB%8D%B0%EC%9D%B4%ED%84%B0+%EC%A0%84%EC%B2%B4&Major_Big_Code=0&Major_Big_Name=%EC%A0%84%EC%B2%B4&Major_Code=0&Major_Name=%EC%A0%84%EC%B2%B4&Edu_Level_Code=9&Edu_Level_Name=%EC%A0%84%EC%B2%B4&Edu_Level_Name=%EC%A0%84%EC%B2%B4&MidScroll=&duty-depth1=on"
-
+JOBURL = "https://www.jobkorea.co.kr"
 
 DETAIL_HEADERS = {
     "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -27,25 +42,169 @@ DETAIL_HEADERS = {
     "referer": "https://www.wanted.co.kr/",
 }
 
+FIELD_ORDER = [
+    "id",
+    "회사이름",
+    "포지션",
+    "title",
+    "title_tag",
+    "description",
+    "meta_description",
+    "url",
+    "employmentType",
+    "datePosted",
+    "occupationalCategory",
+    "validThrough",
+    "experienceRequirements",
+]
+
 DEBUG = True  # 필요 시 False
+
+def _parse_iso_date(text: str) -> Optional[str]:
+    """
+    YYYY.MM.DD / YYYY-MM-DD / YYYY/MM/DD 형태만 ISO-8601(YYYY-MM-DD)로 변환.
+    그 외(상시채용, 채용시 마감, D-3 등)는 None.
+    """
+    if not text:
+        return None
+
+    # 명시적인 날짜가 아닌 표현은 스킵
+    if any(kw in text for kw in ["상시", "채용시", "마감", "오늘", "D-"]):
+        return None
+
+    m = re.search(r"(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})", text)
+    if not m:
+        return None
+
+    y, mth, d = m.groups()
+    return f"{int(y):04d}-{int(mth):02d}-{int(d):02d}"
+
+def parse_jobkorea_li(li) -> Dict[str, Any]:
+    """
+    JobKorea Top100 목록의 <li> 한 개를 받아서
+    지정한 스키마 dict를 반환.
+    """
+    # 기본 스켈레톤
+    data = {
+        "회사이름": None,
+        "포지션": None,
+        "회사 위치": None,
+        "자격 요건": [],
+        "주요업무": [],
+        "employmentType": None,
+        "datePosted": None,
+        "occupationalCategory": [],
+        "validThrough": None,
+        "experienceRequirements": [],
+        "url": None,
+        # 필요하다면 id도 같이 넣어둘 수 있음
+    }
+
+    # ---- id (옵션) ----
+    src_raw = li.get("data-source")
+    if src_raw:
+        try:
+            src = json.loads(src_raw)
+            job_id = src.get("gno") or src.get("giNo")
+            if job_id is not None:
+                data["id"] = str(job_id)
+        except json.JSONDecodeError:
+            pass
+
+    # ---- 회사이름 ----
+    co_link = li.select_one("a.coLink")
+    if co_link:
+        data["회사이름"] = co_link.get_text(strip=True) or None
+
+    # ---- 포지션 (공고 제목) ----
+    title_link = li.select_one("a.link span")
+    if title_link:
+        data["포지션"] = title_link.get_text(strip=True) or None
+
+    # ---- occupationalCategory (직무 카테고리) ----
+    s_tit = li.select_one("div.sTit")
+    if s_tit:
+        cats = [span.get_text(strip=True) for span in s_tit.select("span")]
+        data["occupationalCategory"] = [c for c in cats if c]
+
+    # ---- sDsc(경력/학력/지역/고용형태) 파싱 ----
+    s_dsc = li.select_one("div.sDsc")
+    desc_spans = []
+    if s_dsc:
+        desc_spans = [span.get_text(strip=True) for span in s_dsc.select("span")]
+
+    experience_terms = []
+    employment_type = None
+    location = None
+
+    for t in desc_spans:
+        # 경험 요건
+        if any(k in t for k in ["신입", "경력", "년", "이상", "이하", "무관"]):
+            experience_terms.append(t)
+
+        # 고용형태
+        if employment_type is None and any(k in t for k in ["정규직", "계약직", "인턴", "알바", "파트", "수습"]):
+            employment_type = t
+
+    # 위치 후보: 경력/경험·고용형태에 해당되지 않는 span 중 첫 번째
+    location_candidates = [
+        t for t in desc_spans
+        if t not in experience_terms and t != employment_type
+    ]
+    if location_candidates:
+        location = location_candidates[0]
+
+    data["회사 위치"] = location or None
+    data["employmentType"] = employment_type or None
+    data["experienceRequirements"] = experience_terms
+
+    # ---- 마감일(validThrough) ----
+    day_span = li.select_one("div.side span.day")
+    if day_span:
+        raw_day = day_span.get_text(strip=True)
+        data["validThrough"] = _parse_iso_date(raw_day)
+
+    # ---- url ----
+    detail_link = li.select_one("a.link")
+    if detail_link and detail_link.has_attr("href"):
+        href = detail_link["href"]
+        if href.startswith("/"):
+            data["url"] = JOBURL + href
+        else:
+            data["url"] = href
+
+    # 자격 요건 / 주요업무는 리스트 페이지에 없으므로 [] 유지
+    # datePosted도 명시된 날짜가 보이지 않으면 None 유지
+
+    return data
+
 
 def _dbg(msg: str):
     if DEBUG:
         print(f"[DEBUG] {msg}")
 
-def fetch_jobkorea_links():
+# def fetch_jobkorea_links():
+#     resp = requests.get(LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
+#     resp.raise_for_status()
+#     soup = BeautifulSoup(resp.text, "html.parser")
+
+#     links = []
+#     for a in soup.select("ol.rankList li a.link"):
+#         href = a.get("href")
+#         if not href:
+#             continue
+#         full_url = urljoin("https://www.jobkorea.co.kr", href)
+#         links.append(full_url)
+#     return links
+
+def extract_jobkorea_metadata():
     resp = requests.get(LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")
+    items = soup.select("ol.rankList > li")
+    results = [parse_jobkorea_li(li) for li in items]
+    return results
 
-    links = []
-    for a in soup.select("ol.rankList li a.link"):
-        href = a.get("href")
-        if not href:
-            continue
-        full_url = urljoin("https://www.jobkorea.co.kr", href)
-        links.append(full_url)
-    return links
 
 def fetch_wanted(job_group_id=518, limit=20):
     params = {
@@ -150,20 +309,21 @@ def extract_name_id_position(payload: dict):
         })
     return out
 
-def build_llm_payload(enriched: dict) -> str:
-    parts = [
-        f"id: {enriched.get('id')}",
-        f"company_name: {enriched.get('name')}",
-        f"position: {enriched.get('position')}",
-        f"title_tag: {enriched.get('title') or enriched.get('title_tag')}",
-        f"meta_description: {enriched.get('description') or enriched.get('meta_description')}",
-        f"url: {enriched.get('url')}",
-        f"employmentType: {enriched.get('employmentType')}",
-        f"datePosted: {enriched.get('datePosted')}",
-        f"occupationalCategory: {enriched.get('occupationalCategory')}",
-        f"validThrough: {enriched.get('validThrough')}",
-        f"experienceRequirements: {enriched.get('experienceRequirements')}",
-    ]
+def build_llm_payload(data: Dict[str, Any]) -> str:
+    parts: List[str] = []
+
+    # 1) 우선 중요 필드들만 지정된 순서대로 찍고
+    for key in FIELD_ORDER:
+        if key in data:
+            parts.append(f"{key}: {data[key]}")
+
+    # 2) 나머지 키들도 필요하면 추가로 찍고 싶다면 (옵션)
+    #    이미 찍은 키는 제외
+    printed = set(FIELD_ORDER)
+    for key, value in data.items():
+        if key not in printed:
+            parts.append(f"{key}: {value}")
+
     return "\n".join(parts)
 
 def enrich_jobs_with_detail_meta(jobs: list[dict], *, max_workers: int = 6) -> list[dict]:
@@ -257,5 +417,6 @@ if __name__ == "__main__":
     # llm_payload = build_llm_payload(first)
     # print("\n=== LLM PAYLOAD ===")
     # print(llm_payload)
-    link = fetch_jobkorea_links()
-    print(link)
+    results = extract_jobkorea_metadata()
+    text= build_llm_payload(results[0])
+    print(text)
