@@ -9,6 +9,7 @@ from lib.lchain import llm
 from lib.req import *
 from lib.util import *
 
+
 async def main():
     # out_dir = Path("./out/jobs_json") / datetime.now().strftime("%Y%m%d")
     ndjson_path = Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.ndjson"
@@ -97,8 +98,14 @@ async def main():
     tools = await client.get_tools()
     tool_map = {t.name: t for t in tools}
 
-    payload = fetch_wanted(limit=20)
-    items = extract_name_id_position(payload)
+    payload = fetch_wanted(limit=1)
+    # 원티드 크롤링
+    rows = extract_name_id_position(payload)
+    enriched = enrich_jobs_with_detail_meta(rows, max_workers=3)
+
+    # 잡코리아 크롤링
+    job_item = extract_jobkorea_metadata()
+    items = enriched + job_item
     
     agent = create_agent(
         llm,
@@ -109,9 +116,7 @@ async def main():
     results = []
     for row in items:
         # 2) 상세 1건 문자열 확보 (LLM에 한 번에 하나만)
-        text = await tool_map["wanted_detail_payload"].ainvoke(
-            {"job_id": row["id"], "company_name": row["name"], "position": row["position"]}
-        )
+        text = await tool_map["wanted_detail_payload"].ainvoke({"job_data": row})
         
         print(text)
         # 3) 구조화 LLM 호출(1건 -> JSON 1개)
@@ -123,7 +128,8 @@ async def main():
 
         # (선택) JSON 파싱 확인
         obj = json.loads(out.content)
-        append_ndjson(ndjson_path, obj)            # 누적 NDJSON
+        obj_mormalize = normalize_record(row, obj)
+        append_ndjson(ndjson_path, obj_mormalize)            # 누적 NDJSON
 
 
     # 전체 결과도 한 파일로 저장하고 싶으면:

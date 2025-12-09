@@ -197,7 +197,7 @@ def _dbg(msg: str):
 #         links.append(full_url)
 #     return links
 
-def extract_jobkorea_metadata():
+def extract_jobkorea_metadata() -> list[dict]:
     resp = requests.get(LIST_URL, headers={"User-Agent": "Mozilla/5.0"})
     resp.raise_for_status()
     soup = BeautifulSoup(resp.text, "html.parser")

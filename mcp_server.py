@@ -1,7 +1,7 @@
 import sys
 import logging
 from mcp.server.fastmcp import FastMCP
-from typing import Any, Optional
+from typing import Any, Optional, Dict
 import httpx
 from lib.req import *
 
@@ -13,23 +13,13 @@ mcp = FastMCP("job-tools", json_response=True)
 
 @mcp.tool()
 def wanted_detail_payload(
-    job_id: int,
-    company_name: Optional[str] = None,
-    position: Optional[str] = None,
-) -> str:
-    """
-    https://www.wanted.co.kr/wd/{id} 를 조회해서 title/meta_description 추출 후
-    LLM에 넘길 string(text)로 반환
-    """
+    job_data: Dict[str, Any]) -> str:
     try:
-        enriched = fetch_and_extract_job_meta(job_id)
-        enriched["name"] = company_name
-        enriched["position"] = position
-        
-        text = build_llm_payload(enriched)
-        
+        # 여기서 job_data는 원티드/잡코리아/사람인 등 어디서 온 dict든 상관없음
+        text = build_llm_payload(job_data)
         return text
     except Exception as e:
+        return f"Error: {e}"
         
         return f"Error: {e}"
 
