@@ -21,7 +21,6 @@ def wanted_detail_payload(
     except Exception as e:
         return f"Error: {e}"
         
-        return f"Error: {e}"
 
 if __name__ == "__main__":
     # 로컬 붙이기는 보통 stdio가 가장 단순합니다. (stdio는 표준 전송) :contentReference[oaicite:4]{index=4}

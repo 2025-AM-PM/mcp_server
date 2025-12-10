@@ -36,7 +36,7 @@ def normalize_record(source: dict, llm_json: dict) -> dict:
                 result[key] = None
 
     # 우리가 알고 있는 값 덮어쓰기 (url, 회사이름, 포지션 등)
-    for key in ["url", "회사이름", "포지션"]:
+    for key in ["url", "회사이름", "포지션", "회사 위치"]:
         if key in source:
             result[key] = source[key]
 

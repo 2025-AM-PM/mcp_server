@@ -31,12 +31,27 @@ async def main():
 - 아래 스키마의 JSON 객체 1개를 “오직 JSON만” 반환한다.
 
 입력 형식(예시)
-- id: ...
-- company_name: ...
-- position: ...
-- title_tag: ...
-- meta_description: ...
-- url: ...
+첫번째 버전:
+  - id: ...
+  - company_name: ...
+  - position: ...
+  - title_tag: ...
+  - meta_description: ...
+  - url: ...
+두번째 버전:
+    "회사이름",
+    "포지션",
+    "title",
+    "title_tag",
+    "description",
+    "meta_description",
+    "url",
+    "employmentType",
+    "datePosted",
+    "occupationalCategory",
+    "validThrough",
+    "experienceRequirements",
+반드시 두 버전 중 하나를 사용 할 것.
 
 출력 스키마(반드시 이 키만 사용)
 {
@@ -58,12 +73,7 @@ async def main():
 - 입력 문자열에 근거가 없는 값은 만들지 않는다.
 - 모호하면 null 또는 [].
 
-2) 정보 추출 우선순위
-- company_name / position / url은 입력에서 그대로 사용.
-- "회사 위치", "자격 요건", "주요업무", "validThrough" 등은 meta_description에서 우선 추출.
-- title_tag는 참고만 하고, 출력 키에 직접 포함하지 않는다(출력 스키마에 없음).
-
-3) meta_description 파싱 규칙
+2) meta_description 파싱 규칙
 - meta_description 내에서 다음 라벨을 탐색해 섹션을 분리:
   - "회사 위치:" / "회사위치:" / "근무지:" / "위치:"
   - "자격 요건:" / "자격요건:" / "Requirements:"
@@ -75,16 +85,16 @@ async def main():
   - 앞뒤 공백 제거, 비어있으면 제외
   - 같은 항목 중복 제거
 
-4) experienceRequirements 구성
+3) experienceRequirements 구성
 - "자격 요건" 항목 중 경험/연차/신입/경력 관련 문장만 추려 배열로 만든다.
   예: "Python 기반 ... 1년 이상", "경력 무관", "신입 가능"
 - 경험 요구가 meta_description 다른 구간에 분명히 있으면(예: "경력: 3년+") 그것도 포함.
 
-5) 날짜 형식
+4) 날짜 형식
 - validThrough/datePosted는 입력에 “정확한 날짜”가 있을 때만 ISO-8601(YYYY-MM-DD)로 변환.
 - “상시채용/채용시 마감/마감 임박”처럼 날짜가 없으면 null.
 
-6) 출력 형식 강제
+5) 출력 형식 강제
 - 반환은 JSON 한 덩어리만.
 - 코드블록, 설명, 주석, 추가 텍스트 금지.
 
@@ -94,7 +104,6 @@ async def main():
 - 근거 없는 값(추측)이 들어가 있지 않은가?
 - JSON 파싱 가능한가?
 """
-
     tools = await client.get_tools()
     tool_map = {t.name: t for t in tools}
 
@@ -106,14 +115,12 @@ async def main():
     # 잡코리아 크롤링
     job_item = extract_jobkorea_metadata()
     items = enriched + job_item
-    
-    agent = create_agent(
-        llm,
-        tools=tools,
-        system_prompt=SYSTEM_PROMPT,
-    )
 
-    results = []
+    # 사람인 크롤링
+    saram_item = fetch_saramin_list_html()
+    content = parse_saramin_list_html(saram_item)
+    items = items + content
+  
     for row in items:
         # 2) 상세 1건 문자열 확보 (LLM에 한 번에 하나만)
         text = await tool_map["wanted_detail_payload"].ainvoke({"job_data": row})
