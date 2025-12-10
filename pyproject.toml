@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "bs4>=0.0.2",
+    "elasticsearch>=9.2.0",
+    "future>=1.0.0",
     "httpx>=0.28.1",
     "langchain>=1.1.2",
     "langchain-mcp-adapters>=0.1.14",

@@ -1,18 +1,23 @@
-import asyncio
+import asyncio, hashlib, json
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain.agents import create_agent
 from pathlib import Path
 from datetime import datetime
+from elasticsearch import helpers
 
-from langchain_openai import ChatOpenAI
 from lib.lchain import llm
 from lib.req import *
 from lib.util import *
+from db.server import es
 
+
+def make_doc_id(doc: dict) -> str:
+    base = doc.get("url") or json.dumps(doc, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha1(base.encode("utf-8")).hexdigest()
 
 async def main():
-    # out_dir = Path("./out/jobs_json") / datetime.now().strftime("%Y%m%d")
-    ndjson_path = Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.ndjson"
+    index_name = "jobs"
+    # ndjson_path = Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.ndjson"
 
     client = MultiServerMCPClient(
         {
@@ -107,7 +112,7 @@ async def main():
     tools = await client.get_tools()
     tool_map = {t.name: t for t in tools}
 
-    payload = fetch_wanted(limit=1)
+    payload = fetch_wanted(limit=20)
     # 원티드 크롤링
     rows = extract_name_id_position(payload)
     enriched = enrich_jobs_with_detail_meta(rows, max_workers=3)
@@ -120,7 +125,7 @@ async def main():
     saram_item = fetch_saramin_list_html()
     content = parse_saramin_list_html(saram_item)
     items = items + content
-  
+    actions = []
     for row in items:
         # 2) 상세 1건 문자열 확보 (LLM에 한 번에 하나만)
         text = await tool_map["wanted_detail_payload"].ainvoke({"job_data": row})
@@ -135,12 +140,20 @@ async def main():
 
         # (선택) JSON 파싱 확인
         obj = json.loads(out.content)
-        obj_mormalize = normalize_record(row, obj)
-        append_ndjson(ndjson_path, obj_mormalize)            # 누적 NDJSON
+        obj_normalize = normalize_record(row, obj)
+        doc = coerce_job_record(obj_normalize)
+        # append_ndjson(ndjson_path, obj_normalize)            # 누적 NDJSON
 
+        actions.append({
+            "_op_type": "index",
+            "_index": index_name,
+            "_id": make_doc_id(doc),
+            "_source": doc,
+        })
 
-    # 전체 결과도 한 파일로 저장하고 싶으면:
-    # atomic_write_text(Path("./out") / f"jobs_{datetime.now().strftime('%Y%m%d')}.json",
-    #                   json.dumps(results, ensure_ascii=False, indent=2))
+        if actions:
+          helpers.bulk(es, actions)
+          es.indices.refresh(index=index_name)
+
 
 asyncio.run(main())
